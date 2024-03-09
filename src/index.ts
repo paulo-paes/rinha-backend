@@ -22,38 +22,20 @@ const runWarmup = async () => {
   } finally {
     client.release();
   }
-}
+} 
 
 setTimeout(() => {
   pool.connect().then(() => {
     console.log('Connected to database');
-    Promise.all([
-      runWarmup().then(() => {
-        console.log('Warmup done');
-      }).catch((err) => {
-        console.log('Error running warmup', err);
-        process.exit(1);
-      }),
-      runWarmup().then(() => {
-        console.log('Warmup done');
-      }).catch((err) => {
-        console.log('Error running warmup', err);
-        process.exit(1);
-      }),
-      runWarmup().then(() => {
-        console.log('Warmup done');
-      }).catch((err) => {
-        console.log('Error running warmup', err);
-        process.exit(1);
-      }),
-      runWarmup().then(() => {
-        console.log('Warmup done');
-      }).catch((err) => {
-        console.log('Error running warmup', err);
-        process.exit(1);
-      }),
-    ])
-
+    const promises: Promise<any>[] = [];
+    for (let i = 0; i < 100; i++) {
+      promises.push(runWarmup().then(() => console.log('finished warmup')).catch((err) => console.log('Error running warmup', err)));
+    }
+    Promise.all(promises).then(() => {
+      console.log('Warmup finished');
+    }).catch((err) => {
+      console.log('Error running warmup', err);
+    });
   }).catch((err) => {
     console.log('Error connecting to database', err);
     process.exit(1);

@@ -14,6 +14,10 @@ CREATE TABLE transacoes (
   FOREIGN KEY (cliente_id) REFERENCES clientes(id)
 );
 
+CREATE INDEX idx_transacoes_clientes_id ON transacoes (cliente_id);
+CREATE INDEX idx_transacoes_realizada_em ON transacoes (realizada_em);
+
+
 INSERT INTO clientes VALUES (1, 100000, 0),
 (2, 80000, 0),
 (3, 1000000, 0),
