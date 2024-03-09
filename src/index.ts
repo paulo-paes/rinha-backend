@@ -45,7 +45,7 @@ type CustomerWithTransactions = {
 }
 
 const getCustomer = async (id: number, client: PoolClient): Promise<Customer> => {
-  const res = await client.query(`SELECT * FROM clientes WHERE id = ${id}`);
+  const res = await client.query('SELECT * FROM clientes WHERE id = $1 FOR UPDATE', [id]);
   return res.rows[0];
 }
 
@@ -84,33 +84,25 @@ router.post('/clientes/:id/transacoes', async (ctx) => {
   }
   const client = await pool.connect();
   try {
+    await client.query('BEGIN');
     const customer = await getCustomer(id, client);
     customer.limite = Number(customer.limite);
     customer.saldo = Number(customer.saldo);
     if (tipo === 'd') {
       if (valor > customer.limite + customer.saldo) {
         ctx.status = 422;
+        await client.query('ROLLBACK');
         return
       }
-
       customer.saldo -= valor;
     } else if (tipo === 'c') {
       customer.saldo += valor;
     }
     
-    await client.query('BEGIN');
-      let query = `INSERT INTO transacoes (valor, descricao, tipo, cliente_id) VALUES (${valor}, '${descricao}', '${tipo}', ${id});
-        UPDATE clientes SET saldo = ${customer.saldo} WHERE id = ${id}; `;
-      try {
-        await client.query(query);
-        await client.query('COMMIT');
-      } catch (error) {
-        console.log('Error inserting transaction', error);
-        ctx.status = 500;
-        await client.query('ROLLBACK');
-        client.release();
-        return
-      }
+    
+    await client.query('INSERT INTO transacoes (valor, descricao, tipo, cliente_id) VALUES ($1, $2, $3, $)', [valor, descricao, tipo, id]);
+    await client.query('UPDATE clientes SET saldo = $1 WHERE id = $2', [customer.saldo, id]);
+    await client.query('COMMIT');
     
     ctx.body = {
       limite: customer.limite,
@@ -118,10 +110,12 @@ router.post('/clientes/:id/transacoes', async (ctx) => {
     }
   } catch (error) {
     await client.query('ROLLBACK');
+    throw error;
   } finally {
     client.release()
   }
 });
+
 router.get('/clientes/:id/extrato', async (ctx) => {
   const id = Number(ctx.params.id);
   if (!ctx.params.id || isNaN(id)) {
@@ -136,7 +130,6 @@ router.get('/clientes/:id/extrato', async (ctx) => {
   let client: any;
   try {
     client = await pool.connect();
-    await client.query('BEGIN');
     const customer = await getCustomer(id, client);
     const res: CustomerWithTransactions = {
       saldo: {
@@ -146,18 +139,15 @@ router.get('/clientes/:id/extrato', async (ctx) => {
       },
       ultimas_transacoes: []
     }
-    let query = `SELECT valor, tipo, descricao, realizada_em FROM transacoes WHERE cliente_id = ${id} ORDER BY realizada_em DESC LIMIT 10`;
+    let query = 'SELECT valor, tipo, descricao, realizada_em FROM transacoes WHERE cliente_id = $1 ORDER BY realizada_em DESC LIMIT 10';
   
-    res.ultimas_transacoes = (await client.query(query)).rows;
-    await client.query('COMMIT');
+    res.ultimas_transacoes = (await client.query(query, [id])).rows;
     res.ultimas_transacoes.forEach((t) => {
       t.valor = Number(t.valor);
     });
     delete customer.id;
     ctx.body = res;
-  } catch (error) {
-    await client.query('ROLLBACK');
-  }  finally {
+  } finally {
     client.release();
   }
 });
