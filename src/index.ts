@@ -6,6 +6,7 @@ import { Pool, PoolClient } from 'pg';
 
 const app = new Koa();
 const router = new Router();
+let warmupDone = false;
 
 const pool = new Pool({
   user: 'admin',
@@ -35,6 +36,8 @@ setTimeout(() => {
       console.log('Warmup finished');
     }).catch((err) => {
       console.log('Error running warmup', err);
+    }).finally(() => {
+      warmupDone = true;
     });
   }).catch((err) => {
     console.log('Error connecting to database', err);
@@ -135,6 +138,10 @@ router.post('/clientes/:id/transacoes', async (ctx) => {
 });
 
 router.get('/clientes/:id/extrato', async (ctx) => {
+  if (!warmupDone) {
+    ctx.status = 500;
+    return
+  }
   const id = Number(ctx.params.id);
   if (!ctx.params.id || isNaN(id)) {
     ctx.status = 404;
