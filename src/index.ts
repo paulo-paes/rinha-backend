@@ -1,9 +1,171 @@
 import Koa from 'koa';
+import parser from 'koa-bodyparser';
+import Router from 'koa-router';
+import { Pool, PoolClient } from 'pg';
+
 
 const app = new Koa();
+const router = new Router();
+
+const pool = new Pool({
+  user: 'admin',
+  host: 'localhost',
+  database: 'rinha',
+  password: '123',
+  port: 5432
+})
+
+setTimeout(() => {
+  pool.connect().then(() => {
+    console.log('Connected to database');
+  }).catch((err) => {
+    console.log('Error connecting to database', err);
+    process.exit(1);
+  });
+}, 10000);
+
+type Customer = {
+  id?: number;
+  limite: number;
+  saldo: number;
+}
+
+type CustomerWithTransactions = {
+  saldo: {
+    total: number;
+    data_extrato: Date;
+    limite: number;
+  };
+  ultimas_transacoes: {
+    valor: number;
+    tipo: string;
+    descricao: string;
+    realizada_em: Date;
+  }[]
+}
+
+const getCustomer = async (id: number, client: PoolClient): Promise<Customer> => {
+  const res = await client.query(`SELECT * FROM clientes WHERE id = ${id}`);
+  return res.rows[0];
+}
+
+router.post('/clientes/:id/transacoes', async (ctx) => {
+
+  const body = ctx.request.body as any;
+  const valor = Number(body.valor);
+  const tipo = body.tipo;
+  const id = Number(ctx.params.id);
+  const descricao = body.descricao;
+  if (!ctx.params.id || isNaN(id)) {
+    ctx.status = 404;
+    return
+  }
+
+  if (id < 1 || id > 5) {
+    ctx.status = 404;
+    return
+  }
+
+  if (!descricao || descricao.length < 1 || descricao.length > 10) {
+    ctx.status = 400;
+    return
+  }
+
+  if (tipo !== 'c' && tipo !== 'd') {
+    ctx.status = 400;
+    return
+  }
+
+  const vlrStr = String(body.valor);
+
+  if (!valor || isNaN(valor) || vlrStr.includes('.') || vlrStr.includes(',')) {
+    ctx.status = 400;
+    return
+  }
+  const client = await pool.connect();
+  try {
+    const customer = await getCustomer(id, client);
+    customer.limite = Number(customer.limite);
+    customer.saldo = Number(customer.saldo);
+    if (tipo === 'd') {
+      if (valor > customer.limite + customer.saldo) {
+        ctx.status = 422;
+        return
+      }
+
+      customer.saldo -= valor;
+    } else if (tipo === 'c') {
+      customer.saldo += valor;
+    }
+    
+    await client.query('BEGIN');
+      let query = `INSERT INTO transacoes (valor, descricao, tipo, cliente_id) VALUES (${valor}, '${descricao}', '${tipo}', ${id});
+        UPDATE clientes SET saldo = ${customer.saldo} WHERE id = ${id}; `;
+      try {
+        await client.query(query);
+        await client.query('COMMIT');
+      } catch (error) {
+        console.log('Error inserting transaction', error);
+        ctx.status = 500;
+        await client.query('ROLLBACK');
+        client.release();
+        return
+      }
+    
+    ctx.body = {
+      limite: customer.limite,
+      saldo: customer.saldo,
+    }
+  } catch (error) {
+    await client.query('ROLLBACK');
+  } finally {
+    client.release()
+  }
+});
+router.get('/clientes/:id/extrato', async (ctx) => {
+  const id = Number(ctx.params.id);
+  if (!ctx.params.id || isNaN(id)) {
+    ctx.status = 404;
+    return
+  }
+
+  if (id < 1 || id > 5) {
+    ctx.status = 404;
+    return
+  }
+  let client: any;
+  try {
+    client = await pool.connect();
+    await client.query('BEGIN');
+    const customer = await getCustomer(id, client);
+    const res: CustomerWithTransactions = {
+      saldo: {
+        total: Number(customer.saldo),
+        data_extrato: new Date(),
+        limite: Number(customer.limite)
+      },
+      ultimas_transacoes: []
+    }
+    let query = `SELECT valor, tipo, descricao, realizada_em FROM transacoes WHERE cliente_id = ${id} ORDER BY realizada_em DESC LIMIT 10`;
+  
+    res.ultimas_transacoes = (await client.query(query)).rows;
+    await client.query('COMMIT');
+    res.ultimas_transacoes.forEach((t) => {
+      t.valor = Number(t.valor);
+    });
+    delete customer.id;
+    ctx.body = res;
+  } catch (error) {
+    await client.query('ROLLBACK');
+  }  finally {
+    client.release();
+  }
+});
+
+app.use(parser());
+app.use(router.routes());
 
 
-
-app.listen(3000, () => {
-  console.log('App listening to port 3000')
+app.listen(process.env.APP_PORT, () => {
+  console.log('App listening to port ' + process.env.APP_PORT)
 });
