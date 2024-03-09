@@ -15,9 +15,45 @@ const pool = new Pool({
   port: 5432
 })
 
+const runWarmup = async () => {
+  const client = await pool.connect();
+  try {
+    await client.query('SELECT 1');
+  } finally {
+    client.release();
+  }
+}
+
 setTimeout(() => {
   pool.connect().then(() => {
     console.log('Connected to database');
+    Promise.all([
+      runWarmup().then(() => {
+        console.log('Warmup done');
+      }).catch((err) => {
+        console.log('Error running warmup', err);
+        process.exit(1);
+      }),
+      runWarmup().then(() => {
+        console.log('Warmup done');
+      }).catch((err) => {
+        console.log('Error running warmup', err);
+        process.exit(1);
+      }),
+      runWarmup().then(() => {
+        console.log('Warmup done');
+      }).catch((err) => {
+        console.log('Error running warmup', err);
+        process.exit(1);
+      }),
+      runWarmup().then(() => {
+        console.log('Warmup done');
+      }).catch((err) => {
+        console.log('Error running warmup', err);
+        process.exit(1);
+      }),
+    ])
+
   }).catch((err) => {
     console.log('Error connecting to database', err);
     process.exit(1);
@@ -100,7 +136,7 @@ router.post('/clientes/:id/transacoes', async (ctx) => {
     }
     
     
-    await client.query('INSERT INTO transacoes (valor, descricao, tipo, cliente_id) VALUES ($1, $2, $3, $)', [valor, descricao, tipo, id]);
+    await client.query('INSERT INTO transacoes (valor, descricao, tipo, cliente_id) VALUES ($1, $2, $3, $4)', [valor, descricao, tipo, id]);
     await client.query('UPDATE clientes SET saldo = $1 WHERE id = $2', [customer.saldo, id]);
     await client.query('COMMIT');
     
